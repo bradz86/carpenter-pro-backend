@@ -5,7 +5,13 @@ const { Pool } = require('pg');
 require('dotenv').config();
 
 const app = express();
+// Force port 3000 in production
 const port = process.env.PORT || 3000;
+
+// Log startup information
+console.log('Starting Carpenter Pro API...');
+console.log(`Environment: ${process.env.NODE_ENV}`);
+console.log(`Port configuration: ${port}`);
 
 // Import price scraper
 const PriceScraper = require('./src/services/priceScraper');
@@ -26,6 +32,7 @@ app.use(express.json());
 // Initialize database
 async function initDatabase() {
   try {
+    console.log('Initializing database...');
     // Create tables
     await pool.query(`
       CREATE TABLE IF NOT EXISTS material_prices (
@@ -106,6 +113,29 @@ async function initDatabase() {
 }
 
 // Routes
+
+// Health check - MUST BE FIRST
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date(),
+    port: port,
+    environment: process.env.NODE_ENV
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Carpenter Pro API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      materials: '/api/materials',
+      search: '/api/materials/search'
+    }
+  });
+});
 
 // Get all materials
 app.get('/api/materials', async (req, res) => {
@@ -333,11 +363,6 @@ async function logScrapingError(id, error) {
   `, [error.message, id]);
 }
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date() });
-});
-
 // Schedule price updates (runs on the 1st and 15th of each month at 2 AM)
 cron.schedule('0 2 1,15 * *', async () => {
   console.log('Running scheduled price update...');
@@ -351,44 +376,62 @@ cron.schedule('0 2 1,15 * *', async () => {
   }
 });
 
-// Start server
-app.listen(port, '0.0.0.0', async () => {
-  console.log(`Server running on port ${port}`);
-  await initDatabase();
+// Start server - CRITICAL: Use 0.0.0.0 for Docker/DigitalOcean
+const server = app.listen(port, '0.0.0.0', async () => {
+  console.log(`✅ Server is running on 0.0.0.0:${port}`);
+  console.log(`✅ Health check available at http://0.0.0.0:${port}/health`);
   
-  // Insert default materials if table is empty
-  const count = await pool.query('SELECT COUNT(*) FROM material_prices');
-  if (count.rows[0].count === '0') {
-    console.log('Inserting default materials...');
-    const defaultMaterials = [
-      { category: 'Lumber', name: '2x4x8 Stud', unit: 'each', price: 5.98 },
-      { category: 'Lumber', name: '2x6x8', unit: 'each', price: 8.97 },
-      { category: 'Lumber', name: '2x8x10', unit: 'each', price: 13.45 },
-      { category: 'Lumber', name: '2x10x12', unit: 'each', price: 22.97 },
-      { category: 'Lumber', name: '4x4x8 Post', unit: 'each', price: 19.98 },
-      { category: 'Lumber', name: 'OSB 7/16" 4x8', unit: 'sheet', price: 14.97 },
-      { category: 'Lumber', name: 'Plywood 1/2" 4x8', unit: 'sheet', price: 32.97 },
-      { category: 'Concrete', name: '80lb Concrete Bag', unit: 'bag', price: 8.99 },
-      { category: 'Concrete', name: 'Ready Mix (per yard)', unit: 'cubic yard', price: 125.00 },
-      { category: 'Drywall', name: '1/2" Drywall 4x8', unit: 'sheet', price: 13.98 },
-      { category: 'Drywall', name: 'Joint Compound 5gal', unit: 'bucket', price: 17.98 },
-      { category: 'Drywall', name: 'Drywall Tape 250ft', unit: 'roll', price: 6.98 },
-      { category: 'Roofing', name: 'Architectural Shingles', unit: 'bundle', price: 39.98 },
-      { category: 'Roofing', name: '15lb Felt Paper', unit: 'roll', price: 29.98 },
-      { category: 'Fasteners', name: '16d Framing Nails 50lb', unit: 'box', price: 65.00 },
-      { category: 'Fasteners', name: 'Drywall Screws 5lb', unit: 'box', price: 29.98 },
-      { category: 'Insulation', name: 'R-13 Fiberglass 15"', unit: 'roll', price: 45.98 },
-      { category: 'Insulation', name: 'R-19 Fiberglass 15"', unit: 'roll', price: 62.98 },
-    ];
+  try {
+    await initDatabase();
     
-    for (const material of defaultMaterials) {
-      await pool.query(
-        `INSERT INTO material_prices (category, name, unit, price, source)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (name) DO NOTHING`,
-        [material.category, material.name, material.unit, material.price, 'default']
-      );
+    // Insert default materials if table is empty
+    const count = await pool.query('SELECT COUNT(*) FROM material_prices');
+    if (count.rows[0].count === '0') {
+      console.log('Inserting default materials...');
+      const defaultMaterials = [
+        { category: 'Lumber', name: '2x4x8 Stud', unit: 'each', price: 5.98 },
+        { category: 'Lumber', name: '2x6x8', unit: 'each', price: 8.97 },
+        { category: 'Lumber', name: '2x8x10', unit: 'each', price: 13.45 },
+        { category: 'Lumber', name: '2x10x12', unit: 'each', price: 22.97 },
+        { category: 'Lumber', name: '4x4x8 Post', unit: 'each', price: 19.98 },
+        { category: 'Lumber', name: 'OSB 7/16" 4x8', unit: 'sheet', price: 14.97 },
+        { category: 'Lumber', name: 'Plywood 1/2" 4x8', unit: 'sheet', price: 32.97 },
+        { category: 'Concrete', name: '80lb Concrete Bag', unit: 'bag', price: 8.99 },
+        { category: 'Concrete', name: 'Ready Mix (per yard)', unit: 'cubic yard', price: 125.00 },
+        { category: 'Drywall', name: '1/2" Drywall 4x8', unit: 'sheet', price: 13.98 },
+        { category: 'Drywall', name: 'Joint Compound 5gal', unit: 'bucket', price: 17.98 },
+        { category: 'Drywall', name: 'Drywall Tape 250ft', unit: 'roll', price: 6.98 },
+        { category: 'Roofing', name: 'Architectural Shingles', unit: 'bundle', price: 39.98 },
+        { category: 'Roofing', name: '15lb Felt Paper', unit: 'roll', price: 29.98 },
+        { category: 'Fasteners', name: '16d Framing Nails 50lb', unit: 'box', price: 65.00 },
+        { category: 'Fasteners', name: 'Drywall Screws 5lb', unit: 'box', price: 29.98 },
+        { category: 'Insulation', name: 'R-13 Fiberglass 15"', unit: 'roll', price: 45.98 },
+        { category: 'Insulation', name: 'R-19 Fiberglass 15"', unit: 'roll', price: 62.98 },
+      ];
+      
+      for (const material of defaultMaterials) {
+        await pool.query(
+          `INSERT INTO material_prices (category, name, unit, price, source)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (name) DO NOTHING`,
+          [material.category, material.name, material.unit, material.price, 'default']
+        );
+      }
+      console.log('✅ Default materials inserted');
     }
-    console.log('Default materials inserted');
+  } catch (error) {
+    console.error('❌ Startup error:', error);
   }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    pool.end(() => {
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+  });
 });
